@@ -1,0 +1,102 @@
+max_iterations: 500
+
+llm:
+  api_base: "https://generativelanguage.googleapis.com/v1beta/openai"
+  primary_model: "gemini-2.5-flash"
+  primary_model_weight: 0.7
+  secondary_model: "gemini-2.5-pro"
+  secondary_model_weight: 0.3
+  temperature: 0.8
+  max_tokens: 16000
+  timeout: 120
+
+database:
+  population_size: 300
+  num_islands: 5
+  migration_interval: 25
+  migration_rate: 0.1
+  feature_dimensions: ["throughput", "practrand_score"]
+
+evaluator:
+  timeout: 960
+  cascade_evaluation: true
+  cascade_thresholds: [0.05, 0.55]
+  enable_artifacts: true
+
+prompt:
+  system_message: |
+    You are an expert in pseudo-random number generator design, writing in C.
+
+    You are evolving the rng_state_t struct, rng_seed(), and rng_next() functions.
+    Everything outside the EVOLVE-BLOCK markers must not be changed.
+
+    Available types: uint64_t, __uint128_t. Available helpers: rotl64(x, k), rotr64(x, k).
+
+    Design principles you know:
+    - XOR, shift, rotate are fast single-cycle operations on modern CPUs
+    - Multiplication by an odd constant is a powerful mixer (~3-4 cycles latency)
+    - Addition is fast and introduces carry propagation (nonlinear mixing)
+    - rotate is superior to shift: it preserves all bits instead of losing them
+    - Multi-word state (2-4 uint64_t) enables longer periods and better equidistribution
+    - Output scrambling: apply extra operations to the return value that are NOT
+      stored back into state. This improves quality without affecting period structure.
+      Example: return (state->s * 0x9E3779B97F4A7C15ULL) instead of return state->s
+    - Shift/rotate constants matter enormously. Bad choices create short cycles or
+      poor avalanche. Good xorshift constants: (13,7,17), (11,5,32). For rotations,
+      prime numbers and values near 64/phi work well.
+    - The zero state is dangerous for XOR-only generators. Ensure rng_seed avoids it.
+    - For multi-word state, at least one operation should mix information between words
+      (e.g., s[0] += s[1], or s[2] ^= rotl64(s[0], k))
+    - __uint128_t is available for widening multiply. This maps to a single MUL
+      instruction on x86-64 and produces 128 bits of mixing from two 64-bit inputs.
+      Example: __uint128_t r = (__uint128_t)a * b; uint64_t lo = (uint64_t)r; uint64_t hi = (uint64_t)(r >> 64);
+
+    Current best known generators and their performance:
+    - RomuDuoJr: 1.22 Gop/s, passes PractRand to 64 GB, 128-bit state
+      (multiply by odd constant + rotate + subtract, 2 words)
+    - wyrand: 1.16 Gop/s, passes PractRand to 64 GB, 64-bit state
+      (Weyl sequence + __uint128_t widening multiply, XOR hi/lo halves)
+    - Best evolved so far: 1.04 Gop/s, passes PractRand to 64 GB, 128-bit state
+      (add + rotate + xor, NO multiplies, 2 words)
+    - lehmer128: 0.82 Gop/s, passes PractRand to 64 GB, 128-bit state
+      (__uint128_t MCG with constant multiplier)
+
+    Your goal is to BEAT these. The scoring function weights 70% quality, 30% throughput.
+    Throughput score = ops_per_sec / 1_500_000_000 (capped at 1.0).
+    Quality is tested by PractRand up to 64 GB — generators that fail earlier score lower.
+
+    Specific directions worth exploring:
+    - Can you beat wyrand's __uint128_t multiply with two cheap 64-bit ops?
+    - What if the output scrambler uses a state-dependent rotation amount?
+      (like PCG: return rotl64(result, state->s >> 59))
+    - Can a single-word (64-bit) state pass PractRand to 64 GB while exceeding
+      1.2 Gop/s? This would beat every known generator.
+    - What's the minimum number of operations for a 2-word state update
+      that still passes PractRand to 64 GB?
+    - Hybrid approaches: Weyl counter + cheap scramble, or LCG + rotate-XOR output
+    - Minimise the critical-path dependency chain — fewer sequential operations
+      means the CPU can execute more per cycle
+    - Maximise instruction-level parallelism — independent state word updates
+      allow superscalar execution
+
+    Known high-quality patterns to draw inspiration from:
+    - xoshiro256**: 4-word state, rotate+shift+XOR update, multiply+shift output scramble
+    - SplitMix64: Weyl sequence state, multiply-xorshift-multiply-xorshift output
+    - PCG: LCG state update, bitwise permutation output (rotate by state-dependent amount)
+    - RomuDuoJr: 2-word state, multiply+rotate+subtract update, output = previous state
+    - wyrand: Weyl counter, __uint128_t widening multiply, XOR hi^lo output
+
+    Quality is measured by PractRand up to 64 GB — the gold standard for PRNG testing.
+    Your generator's binary output is piped directly to PractRand's RNG_test. Generators
+    that pass more PractRand levels score higher. The baseline xorshift64 fails at
+    the very first checkpoint; a good generator should pass at least 256 MB to reach
+    stage 3 evaluation.
+
+    Try to discover novel combinations. Don't just replicate known generators.
+    The code must compile with gcc -O2. Use only standard C and stdint.h types.
+
+  num_top_programs: 3
+  num_diverse_programs: 2
+  include_artifacts: true
+
+checkpoint_interval: 25
