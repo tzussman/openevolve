@@ -1,0 +1,124 @@
+max_iterations: 100
+
+language: "c"
+diff_based_evolution: true
+max_code_length: 20000
+
+llm:
+  api_base: "https://generativelanguage.googleapis.com/v1beta/openai/"
+  models:
+    - name: "gemini-2.5-flash"
+      weight: 0.7
+    - name: "gemini-2.5-pro"
+      weight: 0.3
+  temperature: 0.8
+  max_tokens: 16000
+  timeout: 300
+
+database:
+  population_size: 300
+  num_islands: 5
+  migration_interval: 25
+  migration_rate: 0.1
+  feature_dimensions: ["throughput", "code_size"]
+  feature_bins:
+    throughput: 12
+    code_size: 8
+  exploration_ratio: 0.3
+  exploitation_ratio: 0.6
+
+evaluator:
+  timeout: 180
+  cascade_evaluation: false
+  enable_artifacts: true
+
+prompt:
+  system_message: |
+    You are an expert in non-cryptographic hash function design, writing in C.
+
+    You are evolving hash_function(). Everything outside the EVOLVE-BLOCK markers
+    must not be changed. The function signature must remain:
+      uint64_t hash_function(const uint8_t *key, size_t len, uint64_t seed)
+
+    Available types: uint64_t, uint32_t, uint8_t, size_t, __uint128_t.
+    Available helpers: rotl64(x, k), rotr64(x, k), read64(p), read32(p).
+    You must use read64/read32 for multi-byte reads (memcpy-based, alignment-safe).
+    Do NOT cast pointers directly: `*(uint64_t*)p` is undefined behavior on
+    unaligned data. You may define static inline helper functions inside the
+    EVOLVE-BLOCK (e.g. a finalizer or mixer).
+
+    KEY TECHNIQUE — 128-BIT MULTIPLY (MUM):
+    The single most important primitive in modern fast hashes. Multiply two
+    64-bit values to get a 128-bit result, then XOR the high and low halves:
+      static inline uint64_t mum(uint64_t a, uint64_t b) {
+          __uint128_t r = (__uint128_t)a * b;
+          return (uint64_t)(r >> 64) ^ (uint64_t)r;
+      }
+    MUM provides excellent mixing in one operation: every input bit can affect
+    every output bit. It is the core of wyhash, rapidhash, and komihash.
+    Variations: XOR before multiply, XOR after, add instead of XOR for folding.
+
+    MIXING / AVALANCHE:
+    - Multiply-xorshift: h ^= h >> k; h *= C; — two rounds with different
+      constants and shifts achieve full avalanche. Good finalizer constants:
+      0xFF51AFD7ED558CCD/0xC4CEB9FE1A85EC53, 0xBF58476D1CE4E5B9/0x94D049BB133111EB.
+    - Rotation preserves all bits (better than shift for intermediate mixing).
+    - Addition introduces nonlinearity via carry propagation.
+    - XOR is linear — fast but alone has no avalanche.
+
+    BULK PROCESSING (keys > 16 bytes):
+    - Process 16+ bytes at a time: read two 64-bit words and MUM them together,
+      or use multiple independent accumulators for instruction-level parallelism.
+    - For very long keys (> 48 bytes), use 3-4 parallel accumulator streams
+      that are folded together at the end.
+    - Each accumulator should use a different secret/constant so that
+      key[0..7] and key[8..15] don't commute.
+
+    SHORT KEYS (< 16 bytes) — CRITICAL FOR HASH TABLE WORKLOADS:
+    - Use overlapping reads to avoid branches. For 4-8 byte keys, read a
+      uint32_t from the start and a uint32_t from the end (they overlap for
+      keys shorter than 8 bytes), pack into a uint64_t. For 9-16 byte keys,
+      read a uint64_t from the start and a uint64_t from (key + len - 8).
+    - For 1-3 byte keys: combine key[0], key[len/2], key[len-1] into one value.
+    - For 0-length keys: return a mix of seed and length directly.
+    - These patterns eliminate all branches in the short-key fast path.
+
+    SEED HANDLING:
+    - The seed should affect all output bits. XOR seed into the initial state
+      or into the secret constants.
+    - Different seeds must produce completely unrelated outputs for the same key.
+
+    FINALIZATION:
+    - Always finalize the hash state before returning. The raw accumulator
+      often has poor avalanche without a dedicated final mixing step.
+    - Two rounds of multiply-xorshift, or a single MUM, work well.
+
+    STATE OF THE ART DESIGNS TO DRAW INSPIRATION FROM:
+    - rapidhash: Current fastest hash passing all SMHasher tests. MUM-based,
+      reads two 64-bit words per iteration, branchless short-key handling via
+      overlapping reads, minimal finalization. The benchmark to beat.
+    - wyhash: Pioneered the MUM approach. Reads pairs of 64-bit words, XORs
+      each with a secret constant, MUMs the pair. Branchless short-key path.
+    - komihash: MUM-based, feeds the output of each MUM back as input to the
+      next, creating a chain. Uses seed XOR with large constants.
+    - xxHash3/XXH128: Multi-accumulator stripe design, very fast for bulk data.
+      Uses multiply-and-accumulate with 128-bit operations.
+
+    COMMON MISTAKES TO AVOID:
+    - Forgetting to mix in the key length (hash("abc") must differ from
+      hash("abc\0") and from hash("ab")).
+    - Commutative combining: XORing all chunks means permutations of chunks
+      produce the same hash. Use position-dependent mixing.
+    - Byte-by-byte loops for short keys: extremely slow compared to word reads.
+    - Ignoring the seed or XORing it in too late.
+    - Not finalizing: the raw accumulator state often has poor avalanche.
+    - Using only XOR without multiply: insufficient mixing per round.
+
+    The code must compile with gcc -O2 -march=native -lm. Use standard C,
+    stdint.h types, and __uint128_t. Handle zero-length keys gracefully.
+
+  num_top_programs: 3
+  num_diverse_programs: 2
+  include_artifacts: true
+
+checkpoint_interval: 25

@@ -1,0 +1,20 @@
+{
+  "id": "7384da1e-5867-4b4e-99eb-b854df292d2b",
+  "generation": 1,
+  "iteration": 3,
+  "timestamp": 1771882182.8413205,
+  "parent_id": "0e43c5a2-339f-4aa3-a6ca-c6e7e24f764b",
+  "metrics": {
+    "score": 0.7834000473899457,
+    "quality": 0.9888171079687501,
+    "throughput": 0.47527445652173916,
+    "code_size": 56,
+    "combined_score": 0.7834000473899457,
+    "avalanche": 32.002217,
+    "collisions": 0,
+    "compile_errors": "",
+    "test_details": "Compilation: OK\nSanity check: OK\nStage 1 (correctness): 1.00 \u2014 collisions=0, chi_sq=66399.17056\nStage 2 (quality): 0.968 \u2014 avalanche=32.00, diffusion=32.00, bitindep=0.0064\nStage 3 (extended dist): 1.00 \u2014 passed=5/5\nStage 4 (throughput): 0.475 \u2014 weighted_avg=3.80 GB/s\nStage 5 (seed indep): 1.000 \u2014 avg_flips=32.002385\n\nFinal: quality=0.989, throughput=0.475\nCombined score: 0.783"
+  },
+  "language": "c",
+  "saved_at": 1771883217.5559556
+}
